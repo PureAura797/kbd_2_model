@@ -319,47 +319,46 @@ function FXRig({ config }: { config: ConfigState }) {
   })
 
   return (
-    // @ts-ignore - EffectComposer types do not include null/boolean for conditional children, but it works flawlessly at runtime
     <EffectComposer enableNormalPass={false} multisampling={4}>
       <Bloom luminanceThreshold={0.92} mipmapBlur intensity={0.1} />
       <SMAA />
       
       {(activeFx.macroFocus && !activeFx.mouseFocus) ? (
         <MacroFocusDOF activeSpec={config.activeSpec} />
-      ) : null}
+      ) : <></>}
       
       {activeFx.mouseFocus ? (
         <MouseFocusDOF />
-      ) : null}
+      ) : <></>}
       
       {(activeFx.breathingFocus && !activeFx.macroFocus && !activeFx.mouseFocus) ? (
         <BreathingDOF />
-      ) : null}
+      ) : <></>}
       
       {/* Stylized FX */}
       {activeFx.chromaticAberration ? (
         <AnimatedChroma />
-      ) : null}
+      ) : <></>}
       
       {activeFx.vignette ? (
         <Vignette eskil={false} offset={0.1} darkness={1.2} blendFunction={BlendFunction.NORMAL} />
-      ) : null}
+      ) : <></>}
       
       {activeFx.scanline ? (
         <Scanline density={1.2} blendFunction={BlendFunction.OVERLAY} />
-      ) : null}
+      ) : <></>}
       
       {activeFx.glitch ? (
         <Glitch delay={new THREE.Vector2(1.5, 3.5)} duration={new THREE.Vector2(0.1, 0.3)} strength={new THREE.Vector2(0.1, 0.5)} />
-      ) : null}
+      ) : <></>}
       
       {activeFx.noise ? (
         <Noise opacity={0.3} blendFunction={BlendFunction.OVERLAY} />
-      ) : null}
+      ) : <></>}
       
       {activeFx.scrollBlur ? (
         <MotionBlurFX />
-      ) : null}
+      ) : <></>}
     </EffectComposer>
   )
 }
