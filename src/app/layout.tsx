@@ -46,6 +46,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ru" className={cn("scroll-smooth", "font-sans", geist.variable)}>
+      <head>
+        <meta name="theme-color" content="#F8F8F7" />
+      </head>
       <body
         className={`${jura.variable} ${unbounded.variable} ${jetbrainsMono.variable} antialiased`}
         style={{ fontFamily: 'var(--font-body), sans-serif' }}

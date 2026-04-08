@@ -1,181 +1,603 @@
 "use client"
 
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
-import { Environment, Center, Float, OrbitControls } from '@react-three/drei'
-import { EffectComposer, Bloom, Noise, Vignette, DepthOfField, ChromaticAberration } from "@react-three/postprocessing"
-import { Suspense, useRef, useEffect, useState, useLayoutEffect, useMemo } from "react"
+import {
+  Environment,
+  Center,
+  Float,
+  OrbitControls,
+  ContactShadows,
+  RoundedBox,
+  MeshTransmissionMaterial
+} from '@react-three/drei'
+import {
+  EffectComposer,
+  Bloom,
+  SMAA,
+  DepthOfField,
+  ChromaticAberration,
+  Vignette,
+  Noise,
+  Scanline,
+  Glitch
+} from "@react-three/postprocessing"
+import { BlendFunction } from "postprocessing"
+import { Suspense, useRef, useEffect, useState } from "react"
 import * as THREE from "three"
 import { Model } from "./Model"
+import { Annotations } from "./Annotations"
 import { ConfigState } from "@/lib/types"
+import { SPEC_POINTS } from "@/lib/specs"
 
-function easeOutExpo(t: number) { return t === 1 ? 1 : 1 - Math.pow(2, -10 * t) }
-
-/* ── Background + Fog ── */
-function SceneBG() {
+/* ── Background — respects theme ── */
+function SceneBG({ theme }: { theme: 'light' | 'dark' }) {
   const { scene } = useThree()
 
   useEffect(() => {
-    scene.background = new THREE.Color("#0A0A0C")
-    scene.fog = new THREE.FogExp2("#0A0A0C", 0.06)
+    const hex = theme === 'dark' ? '#0B0C10' : '#F2F2F0'
+    scene.background = new THREE.Color(hex)
+    scene.fog = new THREE.FogExp2(hex, 0.015)
     return () => { scene.fog = null }
-  }, [scene])
+  }, [scene, theme])
 
   return null
 }
 
-/* ── Subtle floating dust ── */
-function SubtleDust({ count = 60 }: { count?: number }) {
-  const points = useRef<THREE.Points>(null)
-
-  const particles = useMemo(() => {
-    const temp = new Float32Array(count * 3)
-    for(let i=0; i<count*3; i++) temp[i] = (Math.random() - 0.5) * 15
-    return temp
-  }, [count])
-
-  useFrame((state) => {
-    if (points.current) {
-      points.current.rotation.y = state.clock.getElapsedTime() * 0.008
-      points.current.rotation.x = Math.sin(state.clock.getElapsedTime() * 0.01) * 0.02
-    }
-  })
-
+/* ── Frosted Glass Slab ── */
+function FrostedGlassSlab({ theme }: { theme: 'light' | 'dark' }) {
+  const isDark = theme === 'dark'
+  
   return (
-    <points ref={points}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[particles, 3]}
+    <group position={[0, -0.5, 0]}>
+      {/* 
+        This is the frosted glass slab. 
+        It sits exactly under the controller.
+      */}
+      <RoundedBox args={[2.8, 0.01, 2.0]} radius={0.1} smoothness={4}>
+        <MeshTransmissionMaterial
+          backside
+          samples={4}
+          thickness={0.02}
+          roughness={isDark ? 0.3 : 0.15}
+          chromaticAberration={0.05}
+          anisotropy={0.3}
+          distortion={0}
+          color={isDark ? "#2A2C35" : "#FFFFFF"}
+          resolution={1024}
+          transmission={1}
+          clearcoat={1}
+          clearcoatRoughness={0.1}
         />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.01}
-        color="#FFFFFF"
-        transparent
-        opacity={0.15}
-        sizeAttenuation
-        depthWrite={false}
-      />
-    </points>
+      </RoundedBox>
+    </group>
   )
 }
 
-/* ── Inner Scene ── */
-function InnerScene({ config, scrollProgress, isReady }: {
-  config: ConfigState, scrollProgress: number, isReady: boolean
-}) {
-  const animRef = useRef<THREE.Group>(null)
-  const entryRef = useRef({ started: false, time: 0 })
+/* ══════════════════════════════════════════════════════════════════════════
+   LIGHTING RIG METASYSTEM (6 MODES)
+   ══════════════════════════════════════════════════════════════════════════ */
 
-  // Entry animation
+// 1. Hero Default (Classic Apple Studio)
+function DefaultRig({ isDark }: { isDark: boolean }) {
+  return (
+    <>
+      <spotLight position={[4, -4, -6]} intensity={180} color={isDark ? "#FFEEEE" : "#FFF5E8"} angle={0.6} penumbra={0.3} castShadow decay={2} distance={40} />
+      <directionalLight position={[0, 2, 6]} intensity={isDark ? 0.05 : 0.15} color="#E0E8F5" />
+    </>
+  )
+}
+
+// 2. Window Blinds (Gobo)
+function WindowBlindsRig({ isDark }: { isDark: boolean }) {
+  return (
+    <>
+      <spotLight position={[-4, 8, 4]} intensity={250} color={isDark ? "#F5E6D3" : "#FFFFFF"} angle={0.8} penumbra={0.2} castShadow />;
+      <group position={[-2, 5, 2]} rotation={[Math.PI / 4, 0, Math.PI / 4]}>
+        {Array.from({ length: 14 }).map((_, i) => (
+          // Physical blockers to create blinds shadow
+          <mesh castShadow key={i} position={[0, i * 0.3 - 2, 0]}>
+            <boxGeometry args={[10, 0.15, 0.01]} />
+            <meshBasicMaterial color="black" />
+          </mesh>
+        ))}
+      </group>
+    </>
+  )
+}
+
+// 3. Caustic Pool (Organic Water Refractions)
+function CausticsRig({ isDark }: { isDark: boolean }) {
+  const l1 = useRef<THREE.DirectionalLight>(null!)
+  const l2 = useRef<THREE.DirectionalLight>(null!)
+  
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime()
+    if (l1.current) { l1.current.position.x = Math.sin(t * 0.5) * 5; l1.current.position.z = Math.cos(t * 0.6) * 5; }
+    if (l2.current) { l2.current.position.x = Math.cos(t * 0.4) * 5; l2.current.position.z = Math.sin(t * 0.7) * 5; }
+  })
+  
+  return (
+    <>
+      <directionalLight ref={l1} intensity={1.5} color="#00e5ff" position={[0, 4, 0]} castShadow />
+      <directionalLight ref={l2} intensity={1.5} color={isDark ? "#0055ff" : "#00aaff"} position={[0, 4, 0]} castShadow />
+      <ambientLight intensity={isDark ? 0.05 : 0.1} color="#00aaff" />
+    </>
+  )
+}
+
+// 4. Ring Light
+function RingLightRig({ isDark }: { isDark: boolean }) {
+  return (
+    <>
+      <mesh position={[0, 3, 1]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.5, 0.05, 32, 100]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
+      <spotLight position={[0, 3, 1]} intensity={isDark ? 80 : 150} angle={1.2} penumbra={1} decay={2} castShadow />
+    </>
+  )
+}
+
+// 5. Mouse Tracking
+function TrackingRig({ isDark }: { isDark: boolean }) {
+  const lightRef = useRef<THREE.SpotLight>(null!)
+  
+  useFrame(({ pointer }) => {
+    if (lightRef.current) {
+      lightRef.current.target.position.x = THREE.MathUtils.lerp(lightRef.current.target.position.x, pointer.x * 5, 0.1)
+      lightRef.current.target.position.z = THREE.MathUtils.lerp(lightRef.current.target.position.z, -pointer.y * 5, 0.1)
+      lightRef.current.target.updateMatrixWorld()
+    }
+  })
+  
+  return (
+    <>
+      <spotLight ref={lightRef} position={[0, 6, 0]} intensity={isDark ? 150 : 250} angle={0.2} penumbra={0.5} castShadow />
+      <primitive object={new THREE.Object3D()} ref={(n: THREE.Object3D) => {
+        if (n && lightRef.current) lightRef.current.target = n
+      }} position={[0,0,0]} />
+    </>
+  )
+}
+
+// 6. Breathing Light
+function BreathingRig({ isDark }: { isDark: boolean }) {
+  const lightRef = useRef<THREE.SpotLight>(null!)
+  
+  useFrame(({ clock }) => {
+    if (lightRef.current) {
+      const breathe = (Math.sin(clock.getElapsedTime() * 2) + 1) / 2
+      lightRef.current.intensity = isDark ? 20 + breathe * 150 : 50 + breathe * 200
+    }
+  })
+  
+  return <spotLight ref={lightRef} position={[-2, 4, 4]} intensity={100} color={isDark ? "#ff4444" : "#ff8888"} angle={0.8} penumbra={0.5} castShadow />
+}
+
+// 7. Scroll-Driven Eclipse (Orbital)
+function EclipseRig({ isDark }: { isDark: boolean }) {
+  const lightRef = useRef<THREE.SpotLight>(null!)
+  
+  useFrame(() => {
+    if (!lightRef.current) return
+    const scrollY = window.scrollY || 0
+    const max = document.body.scrollHeight - window.innerHeight
+    const progress = max > 0 ? scrollY / max : 0
+    
+    // Orbital rotation from front right (-PI/4) to back behind (3*PI/4)
+    const angle = -Math.PI / 4 + progress * Math.PI
+    const radius = 6
+    lightRef.current.position.x = Math.sin(angle) * radius
+    lightRef.current.position.z = Math.cos(angle) * radius
+  })
+  
+  return <spotLight ref={lightRef} position={[0, 2, 6]} intensity={isDark ? 150 : 250} color="#FFFFFF" angle={1} penumbra={0.2} castShadow />
+}
+
+// Orchestrator
+function LightingRig({ config }: { config: ConfigState }) {
+  const isDark = config.theme === 'dark'
+  
+  return (
+    <>
+      {/* Universal weak base */}
+      <Environment preset="studio" blur={0.8} environmentIntensity={isDark ? 0.08 : 0.4} />
+      <ambientLight intensity={isDark ? 0.02 : 0.1} color="#FFFFFF" />
+      
+      {config.lightingMode === 'blinds' && <WindowBlindsRig isDark={isDark} />}
+      {config.lightingMode === 'caustics' && <CausticsRig isDark={isDark} />}
+      {config.lightingMode === 'ring' && <RingLightRig isDark={isDark} />}
+      {config.lightingMode === 'tracking' && <TrackingRig isDark={isDark} />}
+      {config.lightingMode === 'breathing' && <BreathingRig isDark={isDark} />}
+      {config.lightingMode === 'eclipse' && <EclipseRig isDark={isDark} />}
+      {config.lightingMode === 'default' && <DefaultRig isDark={isDark} />}
+    </>
+  )
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CAMERA & POSTPROCESSING (FX LAB)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function CameraRig({ config }: { config: ConfigState }) {
+  const { activeFx, activeSpec } = config
+  const isSettling = useRef(false)
+  const { controls, camera } = useThree()
+  
+  // Ref for the target we want orbitControls to look at
+  const orbitTarget = useRef(new THREE.Vector3(0, 0, 0))
+
   useFrame((state, delta) => {
-    if (!animRef.current) return
 
-    if (!isReady) {
-      // Keep at minimal scale while not ready
-      animRef.current.scale.setScalar(0.001)
-      return
+    const t = state.clock.elapsedTime
+    const hasKinematic = activeFx.dutchAngle || activeFx.dollyZoom || activeFx.cameraShake
+
+    // ── HOTSPOT FOCUS LOGIC ──
+    // Find the active spec data
+    const currentSpec = SPEC_POINTS.find(s => s.id === activeSpec)
+    if (currentSpec) {
+      orbitTarget.current.set(...currentSpec.target)
+    } else {
+      orbitTarget.current.set(0, 0, 0)
     }
 
-    if (!entryRef.current.started) {
-      entryRef.current.started = true
-      entryRef.current.time = 0
+    // Smoothly lerp OrbitControls target to our desired focus point
+    if (controls && (controls as any).target) {
+      (controls as any).target.lerp(orbitTarget.current, delta * 4)
     }
 
-    entryRef.current.time += delta
-    const t = Math.min(entryRef.current.time / 1.8, 1)
-    const eased = easeOutExpo(t)
+    // Smoothly push camera closer if a spec is active (macro-focus effect)
+    if (currentSpec && state.camera instanceof THREE.PerspectiveCamera) {
+      // Lerp FOV tighter for macro effect
+      state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 18, delta * 3)
+      state.camera.updateProjectionMatrix()
+    } else if (!hasKinematic && !currentSpec && state.camera instanceof THREE.PerspectiveCamera) {
+      // Return to default FOV if no spec active and no dolly zoom
+      state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 28, delta * 3)
+      state.camera.updateProjectionMatrix()
+    }
 
-    // Scale in
-    const currentScale = THREE.MathUtils.lerp(0.01, 1.0, eased)
-    animRef.current.scale.setScalar(currentScale)
+    if (!hasKinematic && !isSettling.current && !currentSpec) return
 
-    // Scroll-driven rotation
-    const baseY = scrollProgress * Math.PI * 2
-    animRef.current.rotation.y = THREE.MathUtils.lerp(
-      animRef.current.rotation.y,
-      baseY,
-      delta * 2
-    )
+    // 2. Dutch Angle
+    if (activeFx.dutchAngle) {
+      state.camera.rotation.z = THREE.MathUtils.lerp(state.camera.rotation.z, state.pointer.x * 0.2, 0.1)
+      isSettling.current = true
+    } else if (isSettling.current) {
+      state.camera.rotation.z = THREE.MathUtils.lerp(state.camera.rotation.z, 0, 0.1)
+    }
 
-    const targetTiltX = -0.15 + (scrollProgress * 0.1)
-    animRef.current.rotation.x = THREE.MathUtils.lerp(
-      animRef.current.rotation.x,
-      targetTiltX,
-      delta * 2
-    )
+    // 3. Dolly Zoom
+    if (state.camera instanceof THREE.PerspectiveCamera) {
+      if (activeFx.dollyZoom) {
+        const dollyOsc = Math.sin(t * 0.8) // -1 to +1
+        state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 28 + dollyOsc * 15, 0.1)
+        isSettling.current = true
+      } else if (isSettling.current && !currentSpec) {
+        state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 28, 0.1)
+      }
+      state.camera.updateProjectionMatrix()
+    }
+
+    // 1. Handheld Shake
+    if (activeFx.cameraShake) {
+       const shakeX = (Math.sin(t * 5.1) * 0.05 + Math.cos(t * 3.2) * 0.03) * 0.2
+       const shakeY = (Math.sin(t * 4.6) * 0.05 + Math.sin(t * 6.3) * 0.03) * 0.2
+       state.camera.translateX(shakeX)
+       state.camera.translateY(shakeY)
+       isSettling.current = true
+    }
+
+    // Check if settled
+    if (!hasKinematic && isSettling.current && !currentSpec) {
+      if (Math.abs(state.camera.rotation.z) < 0.005 && state.camera instanceof THREE.PerspectiveCamera && Math.abs(state.camera.fov - 28) < 0.1) {
+        state.camera.rotation.z = 0
+        state.camera.fov = 28
+        state.camera.updateProjectionMatrix()
+        isSettling.current = false
+      }
+    }
   })
 
-  useLayoutEffect(() => {
-    if (animRef.current) animRef.current.scale.setScalar(0.001)
-  }, [])
+  return null
+}
+
+function FXRig({ config }: { config: ConfigState }) {
+  const { activeFx } = config
+  
+  const focusTarget = useRef(new THREE.Vector3(0,0,0))
+  useFrame(({ pointer, raycaster, scene, camera }) => {
+    if (activeFx.mouseFocus) {
+      raycaster.setFromCamera(pointer, camera)
+      const intersects = raycaster.intersectObjects(scene.children, true)
+      if (intersects.length > 0) {
+        focusTarget.current.lerp(intersects[0].point, 0.1)
+      } else {
+        focusTarget.current.lerp(new THREE.Vector3(0,0,0), 0.05)
+      }
+    }
+  })
+
+  return (
+    // @ts-ignore - EffectComposer types do not include null/boolean for conditional children, but it works flawlessly at runtime
+    <EffectComposer enableNormalPass={false} multisampling={4}>
+      <Bloom luminanceThreshold={0.92} mipmapBlur intensity={0.1} />
+      <SMAA />
+      
+      {(activeFx.macroFocus && !activeFx.mouseFocus) ? (
+        <MacroFocusDOF activeSpec={config.activeSpec} />
+      ) : null}
+      
+      {activeFx.mouseFocus ? (
+        <MouseFocusDOF />
+      ) : null}
+      
+      {(activeFx.breathingFocus && !activeFx.macroFocus && !activeFx.mouseFocus) ? (
+        <BreathingDOF />
+      ) : null}
+      
+      {/* Stylized FX */}
+      {activeFx.chromaticAberration ? (
+        <AnimatedChroma />
+      ) : null}
+      
+      {activeFx.vignette ? (
+        <Vignette eskil={false} offset={0.1} darkness={1.2} blendFunction={BlendFunction.NORMAL} />
+      ) : null}
+      
+      {activeFx.scanline ? (
+        <Scanline density={1.2} blendFunction={BlendFunction.OVERLAY} />
+      ) : null}
+      
+      {activeFx.glitch ? (
+        <Glitch delay={new THREE.Vector2(1.5, 3.5)} duration={new THREE.Vector2(0.1, 0.3)} strength={new THREE.Vector2(0.1, 0.5)} />
+      ) : null}
+      
+      {activeFx.noise ? (
+        <Noise opacity={0.3} blendFunction={BlendFunction.OVERLAY} />
+      ) : null}
+      
+      {activeFx.scrollBlur ? (
+        <MotionBlurFX />
+      ) : null}
+    </EffectComposer>
+  )
+}
+
+function AnimatedChroma() {
+  const offset = useRef(new THREE.Vector2(0, 0))
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    const amount = 0.003 + Math.sin(t * 3) * 0.002
+    offset.current.set(amount, amount * 0.5)
+  })
+  return <ChromaticAberration offset={offset.current} radialModulation={false} />
+}
+
+function MotionBlurFX() {
+  const offset = useRef(new THREE.Vector2(0, 0))
+  const lastPos = useRef(new THREE.Vector2(0, 0))
+  useFrame((state) => {
+    const dx = state.pointer.x - lastPos.current.x
+    const dy = state.pointer.y - lastPos.current.y
+    const vel = Math.abs(dx) + Math.abs(dy)
+    lastPos.current.set(state.pointer.x, state.pointer.y)
+    
+    const target = Math.min(vel * 0.4, 0.04)
+    offset.current.x = THREE.MathUtils.lerp(offset.current.x, target, 0.1)
+    offset.current.y = THREE.MathUtils.lerp(offset.current.y, target, 0.1)
+  })
+  return <ChromaticAberration offset={offset.current} />
+}
+
+/* ─── MACRO FOCUS ───────────────────────────────────────────────────────────
+   Product photography style: entire controller sharp, background softly blurred.
+   Pass initial target to create Vector3, then mutate via ref each frame. */
+function MacroFocusDOF({ activeSpec }: { activeSpec: string | null }) {
+  const dofRef = useRef<any>(null)
+  const initTarget = useRef(new THREE.Vector3(0, 0, 0))
+  
+  useFrame((state, delta) => {
+    if (!dofRef.current?.target) return
+    
+    if (activeSpec) {
+      const spec = SPEC_POINTS.find(s => s.id === activeSpec)
+      if (spec) {
+        dofRef.current.target.lerp(new THREE.Vector3(...spec.target), delta * 4)
+      }
+    } else {
+      dofRef.current.target.lerp(new THREE.Vector3(0, 0, 0), delta * 3)
+    }
+  })
+  
+  const focalLength = activeSpec ? 0.2 : 0.5
+  const bokehScale = activeSpec ? 3 : 2
+  
+  return <DepthOfField ref={dofRef} target={initTarget.current} focalLength={focalLength} bokehScale={bokehScale} focusDistance={0} />
+}
+
+/* ─── BREATHING DOF ────────────────────────────────────────────────────────
+   Cinematic lens breathing: bokehScale OSCILLATES over time via ref. */
+function BreathingDOF() {
+  const dofRef = useRef<any>(null)
+  const initTarget = useRef(new THREE.Vector3(0, 0, 0))
+  
+  useFrame((state) => {
+    if (!dofRef.current?.target) return
+    const t = state.clock.elapsedTime
+    
+    dofRef.current.target.lerp(new THREE.Vector3(0, 0, 0), 0.05)
+    
+    // BREATHING: oscillate bokehScale so blur visibly pulses
+    const breathCycle = Math.sin(t * 1.5)
+    dofRef.current.bokehScale = 2.5 + breathCycle * 2.0
+    
+    if (dofRef.current.circleOfConfusionMaterial) {
+      dofRef.current.circleOfConfusionMaterial.uniforms.focalLength.value = 0.35 + breathCycle * 0.2
+    }
+  })
+  
+  return <DepthOfField ref={dofRef} target={initTarget.current} focalLength={0.35} bokehScale={2.5} focusDistance={0} />
+}
+
+/* ─── MOUSE FOCUS DOF ──────────────────────────────────────────────────────
+   Interactive: sharp zone follows cursor via raycast.
+   Mutates effect.target via ref so focus ACTUALLY tracks the mouse. */
+function MouseFocusDOF() {
+  const dofRef = useRef<any>(null)
+  const initTarget = useRef(new THREE.Vector3(0, 0, 0))
+  
+  useFrame(({ raycaster, scene, camera, pointer }) => {
+    if (!dofRef.current?.target) return
+    
+    raycaster.setFromCamera(pointer, camera)
+    
+    const intersects = raycaster.intersectObjects(scene.children, true)
+      .filter(hit => hit.object.name !== 'pedestal_base' && hit.object.name !== 'pedestal_glow')
+      
+    if (intersects.length > 0) {
+      dofRef.current.target.lerp(intersects[0].point, 0.3)
+    } else {
+      dofRef.current.target.lerp(new THREE.Vector3(0, 0, 0), 0.05)
+    }
+  })
+  
+  return <DepthOfField ref={dofRef} target={initTarget.current} focalLength={0.03} bokehScale={5} focusDistance={0} />
+}
+
+/* ── Subtle idle animation ── */
+function IdleAnimation({ groupRef }: { groupRef: React.RefObject<THREE.Group> }) {
+  useFrame((state) => {
+    if (!groupRef.current) return
+    const time = state.clock.getElapsedTime()
+
+    // Majestic slow breathing rotation
+    groupRef.current.rotation.y = Math.sin(time * 0.1) * 0.08
+    groupRef.current.rotation.x = -0.05 + Math.sin(time * 0.06) * 0.04
+    groupRef.current.rotation.z = Math.sin(time * 0.05) * 0.02
+  })
+
+  return null
+}
+
+
+
+
+
+/* ── Pedestal System ── */
+function Pedestal({ config }: { config: ConfigState }) {
+  if (config.standMode === 'void' || config.standMode === 'quantum') {
+     return (
+        <group position={[0, -0.495, 0]}>
+         <mesh rotation={[-Math.PI / 2, 0, 0]}>
+           <ringGeometry args={[1.6, 1.62, 64]} />
+           <meshBasicMaterial color={config.theme === 'dark' ? '#333' : '#ccc'} transparent opacity={0.4} />
+         </mesh>
+         <mesh rotation={[-Math.PI / 2, 0, 0]}>
+           <circleGeometry args={[1.6, 64]} />
+           <meshBasicMaterial color={config.theme === 'dark' ? '#000' : '#aaa'} transparent opacity={0.1} />
+         </mesh>
+        </group>
+     )
+  }
+  if (config.standMode === 'monolith') {
+     return (
+       <group position={[0, -5.5, 0]}>
+         {/* A massive deep plinth reaching into the floor */}
+         <RoundedBox args={[3.2, 10, 2.4]} radius={0.15} smoothness={4}>
+           <meshStandardMaterial 
+             color={config.theme === 'dark' ? '#050505' : '#111111'} 
+             roughness={0.15} 
+             metalness={0.8} 
+             envMapIntensity={2} 
+           />
+         </RoundedBox>
+       </group>
+     )
+  }
+  // Default: glass
+  return <FrostedGlassSlab theme={config.theme} />
+}
+
+/* ── Inner Scene ── */
+function InnerScene({ config }: { config: ConfigState }) {
+  const groupRef = useRef<THREE.Group>(null!)
 
   return (
     <>
-      <Environment preset="studio" blur={1.0} environmentIntensity={0.25} />
-      <ambientLight intensity={0.015} color="#FFFFFF" />
+      {/* ═══ DYNAMIC LIGHTING METASYSTEM ═══ */}
+      <LightingRig config={config} />
 
-      {/* Hero key light — warm top fill */}
-      <spotLight
-        position={[2, 12, 2]}
-        intensity={60}
-        color="#FFF8F0"
-        angle={0.5}
-        penumbra={0.6}
-        castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-bias={-0.0001}
-        decay={2}
-        distance={35}
-      />
+      {/* ═══ POLE / SLAB — STATIONARY ═══ */}
+      <Pedestal config={config} />
 
-      {/* Cool fill light */}
-      <directionalLight position={[-5, 4, 3]} intensity={0.15} color="#B0C0E0" />
+      {/* Ground contact shadow ON the slab */}
+      {config.standMode !== 'void' && config.standMode !== 'quantum' && (
+        <ContactShadows
+          position={[0, -0.49, 0]}
+          opacity={config.theme === 'dark' ? 0.8 : 0.5}
+          scale={7}
+          blur={2.5}
+          far={6}
+          resolution={512}
+          color="#000000"
+        />
+      )}
+      
+      {/* For void/quantum, sharper tighter shadow on the imaginary floor */}
+      {(config.standMode === 'void' || config.standMode === 'quantum') && (
+        <ContactShadows
+          position={[0, -0.49, 0]}
+          opacity={config.theme === 'dark' ? 0.9 : 0.6}
+          scale={4}
+          blur={1.0}
+          far={10}
+          resolution={512}
+          color="#000000"
+        />
+      )}
 
-      {/* Rim light */}
-      <spotLight
-        position={[-3, 5, -6]}
-        intensity={50}
-        color="#FFFFFF"
-        angle={0.5}
-        penumbra={1}
-        decay={2}
-      />
-
-      {/* Subtle bottom fill — prevents pure black underside */}
-      <directionalLight position={[0, -3, 2]} intensity={0.04} color="#8090B0" />
-
-      {/* Product — no plinth, floating freely */}
-      <Float speed={1.2} rotationIntensity={0.06} floatIntensity={0.12} floatingRange={[-0.01, 0.01]}>
-        <group ref={animRef} position={[0, 0.5, 0]}>
+      {/* ═══ PRODUCT — FLOATING ABOVE SLAB ═══ */}
+      <Float
+        speed={config.standMode === 'monolith' ? 0.2 : 1.5}
+        rotationIntensity={config.standMode === 'quantum' ? 0.0 : 0.2}
+        floatIntensity={config.standMode === 'quantum' ? 0.1 : 0.4}
+        floatingRange={config.standMode === 'monolith' ? [0.0, 0.015] : [-0.1, 0.1]}
+      >
+        <group 
+          ref={groupRef} 
+          position={[0, 0.1, 0]} 
+          rotation={
+            config.standMode === 'quantum' 
+              ? [Math.PI / 4, Math.PI / 6, Math.PI / 8] 
+              : [0, 0, 0]
+          }
+          scale={15}
+        >
           <Center>
             <Model config={config} />
+            <Annotations />
           </Center>
         </group>
       </Float>
 
-      <EffectComposer enableNormalPass={false} multisampling={4}>
-        <Bloom luminanceThreshold={0.7} mipmapBlur intensity={0.5} />
-        <DepthOfField target={[0, 0.5, 0]} focalLength={0.04} bokehScale={4} height={700} />
-        <ChromaticAberration offset={new THREE.Vector2(0.0008, 0.0008)} />
-        <Noise opacity={0.03} />
-        <Vignette eskil={false} offset={0.05} darkness={1.1} />
-      </EffectComposer>
+      <IdleAnimation groupRef={groupRef} />
 
-      <SubtleDust />
+      <CameraRig config={config} />
+      <FXRig config={config} />
 
       <OrbitControls
-        enableZoom={false}
+        enableZoom={true}
         enablePan={false}
         enableRotate={true}
         minPolarAngle={Math.PI / 4}
-        maxPolarAngle={Math.PI / 2.3}
-        autoRotate
-        autoRotateSpeed={0.12}
-        target={[0, 0.5, 0]}
+        maxPolarAngle={Math.PI / 2}
+        minDistance={4}
+        maxDistance={12}
+        autoRotate={false}
+        target={[0, 0, 0]}
         makeDefault
-        dampingFactor={0.04}
+        dampingFactor={0.05}
         enableDamping
       />
     </>
@@ -183,24 +605,24 @@ function InnerScene({ config, scrollProgress, isReady }: {
 }
 
 
-export function Scene({ isReady, config, scrollProgress = 0 }: {
-  isReady: boolean, config: ConfigState, scrollProgress: number
+export function Scene({ config }: {
+  isReady?: boolean, config: ConfigState, scrollProgress?: number
 }) {
   return (
     <Canvas
       shadows
-      camera={{ position: [0, 1.0, 8], fov: 30 }}
+      camera={{ position: [-3, 2, 6], fov: 28 }}
       dpr={[1, 2]}
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.1,
+        toneMappingExposure: 1.5,
         outputColorSpace: THREE.SRGBColorSpace,
       }}
     >
       <Suspense fallback={null}>
-        <SceneBG />
-        <InnerScene config={config} scrollProgress={scrollProgress} isReady={isReady} />
+        <SceneBG theme={config.theme} />
+        <InnerScene config={config} />
       </Suspense>
     </Canvas>
   )
