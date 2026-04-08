@@ -1,0 +1,1 @@
+export type ConfigState = { bodyColor: string; buttonsColor: string; screenOn: boolean; lightIntensity: number; environment: 'studio' | 'city' | 'warehouse'; wireframe: boolean; exploded: boolean; amount: number; layout: 'line' | 'cinematic'; }
