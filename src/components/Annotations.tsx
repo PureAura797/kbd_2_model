@@ -29,7 +29,7 @@ export function Annotations() {
                   initial={{ scale: 0, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0, opacity: 0 }}
-                  transition={{ delay: i * 0.1, type: "spring" }}
+                  transition={{ delay: i * 0.08, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                   className="relative group cursor-pointer"
                   onClick={(e) => {
                     e.stopPropagation()

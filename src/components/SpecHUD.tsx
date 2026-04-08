@@ -16,13 +16,13 @@ export function SpecHUD() {
     <AnimatePresence>
       {activeSpec && (
         <motion.div
-          initial={{ x: "100%", opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          exit={{ x: "100%", opacity: 0 }}
-          transition={{ type: "spring", damping: 20, stiffness: 100 }}
-          className="absolute top-0 right-0 h-full w-full sm:w-[400px] pointer-events-none z-50 p-4 sm:p-8 flex flex-col justify-center"
+          initial={{ y: 40, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 40, opacity: 0 }}
+          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          className="absolute bottom-0 sm:bottom-auto sm:top-0 right-0 w-full sm:w-[400px] sm:h-full pointer-events-none z-50 p-3 sm:p-8 flex flex-col justify-end sm:justify-center"
         >
-          <div className="pointer-events-auto h-auto max-h-full flex flex-col rounded-[2rem] overflow-hidden border border-[var(--text-primary)]/10 shadow-[0_24px_80px_rgba(0,0,0,0.12)] backdrop-blur-[40px] bg-white/40 dark:bg-[#050505]/60 relative isolate [transform:translateZ(0)]">
+          <div className="pointer-events-auto max-h-[60vh] sm:max-h-full flex flex-col rounded-2xl sm:rounded-[2rem] overflow-hidden border border-[var(--text-primary)]/10 shadow-[0_24px_80px_rgba(0,0,0,0.12)] backdrop-blur-[40px] bg-white/40 dark:bg-[#050505]/60 relative isolate [transform:translateZ(0)]">
             
             {/* Fake Noise Texture for Premium Feel */}
             <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-overlay" style={{ backgroundImage: 'url("https://grainy-gradients.vercel.app/noise.svg")' }} />
