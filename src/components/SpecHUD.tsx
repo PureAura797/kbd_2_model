@@ -20,9 +20,9 @@ export function SpecHUD() {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 40, opacity: 0 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className="absolute bottom-0 sm:bottom-auto sm:top-0 right-0 w-full sm:w-[400px] sm:h-full pointer-events-none z-50 p-3 sm:p-8 flex flex-col justify-end sm:justify-center"
+          className="absolute bottom-16 sm:bottom-auto sm:top-0 right-0 w-full sm:w-[400px] sm:h-full pointer-events-none z-50 p-3 sm:p-8 flex flex-col justify-end sm:justify-center"
         >
-          <div className="pointer-events-auto max-h-[60vh] sm:max-h-full flex flex-col rounded-2xl sm:rounded-[2rem] overflow-hidden border border-[var(--text-primary)]/10 shadow-[0_24px_80px_rgba(0,0,0,0.12)] backdrop-blur-[40px] bg-white/40 dark:bg-[#050505]/60 relative isolate [transform:translateZ(0)]">
+          <div className="pointer-events-auto max-h-[50vh] sm:max-h-full flex flex-col rounded-2xl sm:rounded-[2rem] overflow-hidden border border-[var(--text-primary)]/10 shadow-[0_24px_80px_rgba(0,0,0,0.12)] backdrop-blur-[40px] bg-white/40 dark:bg-[#050505]/60 relative isolate [transform:translateZ(0)]">
             
             {/* Fake Noise Texture for Premium Feel */}
             <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-overlay" style={{ backgroundImage: 'url("https://grainy-gradients.vercel.app/noise.svg")' }} />
@@ -43,7 +43,7 @@ export function SpecHUD() {
 
             {/* Content */}
             <div className="p-6 relative z-10 flex-1 overflow-y-auto hidden-scrollbar">
-              <h2 className="text-2xl font-bold font-display tracking-tight text-[var(--text-primary)] mb-1">
+              <h2 className="text-xl sm:text-2xl font-bold font-display tracking-tight text-[var(--text-primary)] mb-1">
                 {activeSpec.title}
               </h2>
               <h3 className="text-[11px] font-mono tracking-widest uppercase text-[var(--text-muted)] mb-6">
