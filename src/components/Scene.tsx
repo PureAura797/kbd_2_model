@@ -28,6 +28,8 @@ import { Model } from "./Model"
 import { Annotations } from "./Annotations"
 import { ConfigState } from "@/lib/types"
 import { SPEC_POINTS } from "@/lib/specs"
+import { useGPUStore } from "@/store/useGPUStore"
+import type { QualitySettings } from "@/lib/gpu-detect"
 
 /* ── Background — respects theme ── */
 function SceneBG({ theme }: { theme: 'light' | 'dark' }) {
@@ -44,30 +46,46 @@ function SceneBG({ theme }: { theme: 'light' | 'dark' }) {
 }
 
 /* ── Frosted Glass Slab ── */
-function FrostedGlassSlab({ theme }: { theme: 'light' | 'dark' }) {
+function FrostedGlassSlab({ theme, quality }: { theme: 'light' | 'dark', quality: QualitySettings }) {
   const isDark = theme === 'dark'
   
   return (
     <group position={[0, -0.5, 0]}>
       {/* 
         This is the frosted glass slab. 
-        It sits exactly under the controller.
+        Uses TransmissionMaterial on high-tier GPUs,
+        falls back to standard glass on medium/low.
       */}
       <RoundedBox args={[2.8, 0.01, 2.0]} radius={0.1} smoothness={4}>
-        <MeshTransmissionMaterial
-          backside
-          samples={4}
-          thickness={0.02}
-          roughness={isDark ? 0.3 : 0.15}
-          chromaticAberration={0.05}
-          anisotropy={0.3}
-          distortion={0}
-          color={isDark ? "#2A2C35" : "#FFFFFF"}
-          resolution={1024}
-          transmission={1}
-          clearcoat={1}
-          clearcoatRoughness={0.1}
-        />
+        {quality.useTransmissionMaterial ? (
+          <MeshTransmissionMaterial
+            backside
+            samples={4}
+            thickness={0.02}
+            roughness={isDark ? 0.3 : 0.15}
+            chromaticAberration={0.05}
+            anisotropy={0.3}
+            distortion={0}
+            color={isDark ? "#2A2C35" : "#FFFFFF"}
+            resolution={quality.transmissionResolution}
+            transmission={1}
+            clearcoat={1}
+            clearcoatRoughness={0.1}
+          />
+        ) : (
+          <meshPhysicalMaterial
+            color={isDark ? "#2A2C35" : "#F8F8F8"}
+            roughness={isDark ? 0.3 : 0.15}
+            metalness={0.05}
+            transmission={0.92}
+            thickness={0.02}
+            clearcoat={1}
+            clearcoatRoughness={0.1}
+            ior={1.5}
+            transparent
+            opacity={0.9}
+          />
+        )}
       </RoundedBox>
     </group>
   )
@@ -302,12 +320,12 @@ function CameraRig({ config }: { config: ConfigState }) {
   return null
 }
 
-function FXRig({ config }: { config: ConfigState }) {
+function FXRig({ config, quality }: { config: ConfigState, quality: QualitySettings }) {
   const { activeFx } = config
   
   const focusTarget = useRef(new THREE.Vector3(0,0,0))
   useFrame(({ pointer, raycaster, scene, camera }) => {
-    if (activeFx.mouseFocus) {
+    if (quality.enableDOF && activeFx.mouseFocus) {
       raycaster.setFromCamera(pointer, camera)
       const intersects = raycaster.intersectObjects(scene.children, true)
       if (intersects.length > 0) {
@@ -318,20 +336,27 @@ function FXRig({ config }: { config: ConfigState }) {
     }
   })
 
+  // On low tier — skip EffectComposer entirely
+  if (!quality.enableBloom && !quality.enableSMAA && !quality.enableDOF) {
+    return null
+  }
+
   return (
-    <EffectComposer enableNormalPass={false} multisampling={4}>
-      <Bloom luminanceThreshold={0.92} mipmapBlur intensity={0.1} />
-      <SMAA />
+    <EffectComposer enableNormalPass={false} multisampling={quality.multisampling}>
+      {quality.enableBloom ? (
+        <Bloom luminanceThreshold={0.92} mipmapBlur intensity={0.1} />
+      ) : <></>}
+      {quality.enableSMAA ? <SMAA /> : <></>}
       
-      {(activeFx.macroFocus && !activeFx.mouseFocus) ? (
+      {(quality.enableDOF && activeFx.macroFocus && !activeFx.mouseFocus) ? (
         <MacroFocusDOF activeSpec={config.activeSpec} />
       ) : <></>}
       
-      {activeFx.mouseFocus ? (
+      {(quality.enableDOF && activeFx.mouseFocus) ? (
         <MouseFocusDOF />
       ) : <></>}
       
-      {(activeFx.breathingFocus && !activeFx.macroFocus && !activeFx.mouseFocus) ? (
+      {(quality.enableDOF && activeFx.breathingFocus && !activeFx.macroFocus && !activeFx.mouseFocus) ? (
         <BreathingDOF />
       ) : <></>}
       
@@ -484,7 +509,7 @@ function IdleAnimation({ groupRef }: { groupRef: React.RefObject<THREE.Group> })
 
 
 /* ── Pedestal System ── */
-function Pedestal({ config }: { config: ConfigState }) {
+function Pedestal({ config, quality }: { config: ConfigState, quality: QualitySettings }) {
   if (config.standMode === 'void' || config.standMode === 'quantum') {
      return (
         <group position={[0, -0.495, 0]}>
@@ -514,12 +539,12 @@ function Pedestal({ config }: { config: ConfigState }) {
        </group>
      )
   }
-  // Default: glass
-  return <FrostedGlassSlab theme={config.theme} />
+  // Default: glass (quality-aware)
+  return <FrostedGlassSlab theme={config.theme} quality={quality} />
 }
 
 /* ── Inner Scene ── */
-function InnerScene({ config }: { config: ConfigState }) {
+function InnerScene({ config, quality }: { config: ConfigState, quality: QualitySettings }) {
   const groupRef = useRef<THREE.Group>(null!)
 
   return (
@@ -528,30 +553,30 @@ function InnerScene({ config }: { config: ConfigState }) {
       <LightingRig config={config} />
 
       {/* ═══ POLE / SLAB — STATIONARY ═══ */}
-      <Pedestal config={config} />
+      <Pedestal config={config} quality={quality} />
 
       {/* Ground contact shadow ON the slab */}
-      {config.standMode !== 'void' && config.standMode !== 'quantum' && (
+      {quality.enableContactShadows && config.standMode !== 'void' && config.standMode !== 'quantum' && (
         <ContactShadows
           position={[0, -0.49, 0]}
           opacity={config.theme === 'dark' ? 0.8 : 0.5}
           scale={7}
           blur={2.5}
           far={6}
-          resolution={512}
+          resolution={quality.contactShadowResolution}
           color="#000000"
         />
       )}
       
       {/* For void/quantum, sharper tighter shadow on the imaginary floor */}
-      {(config.standMode === 'void' || config.standMode === 'quantum') && (
+      {quality.enableContactShadows && (config.standMode === 'void' || config.standMode === 'quantum') && (
         <ContactShadows
           position={[0, -0.49, 0]}
           opacity={config.theme === 'dark' ? 0.9 : 0.6}
           scale={4}
           blur={1.0}
           far={10}
-          resolution={512}
+          resolution={quality.contactShadowResolution}
           color="#000000"
         />
       )}
@@ -583,7 +608,7 @@ function InnerScene({ config }: { config: ConfigState }) {
       <IdleAnimation groupRef={groupRef} />
 
       <CameraRig config={config} />
-      <FXRig config={config} />
+      <FXRig config={config} quality={quality} />
 
       <OrbitControls
         enableZoom={true}
@@ -604,24 +629,92 @@ function InnerScene({ config }: { config: ConfigState }) {
 }
 
 
+/* ── WebGL Context Loss Recovery ── */
+function ContextGuard() {
+  const { gl } = useThree()
+  
+  useEffect(() => {
+    const canvas = gl.domElement
+    
+    const handleLost = (e: Event) => {
+      e.preventDefault()
+      console.error('[WebGL] Context lost — attempting recovery...')
+    }
+    
+    const handleRestored = () => {
+      console.log('[WebGL] Context restored successfully')
+    }
+    
+    canvas.addEventListener('webglcontextlost', handleLost)
+    canvas.addEventListener('webglcontextrestored', handleRestored)
+    
+    return () => {
+      canvas.removeEventListener('webglcontextlost', handleLost)
+      canvas.removeEventListener('webglcontextrestored', handleRestored)
+    }
+  }, [gl])
+  
+  return null
+}
+
+/* ── Static Fallback (no WebGL) ── */
+function StaticFallback({ theme }: { theme: 'light' | 'dark' }) {
+  const isDark = theme === 'dark'
+  return (
+    <div
+      className="w-full h-full flex flex-col items-center justify-center gap-6"
+      style={{ background: isDark ? '#0B0C10' : '#F2F2F0' }}
+    >
+      <div className="text-center space-y-3">
+        <div className="text-5xl md:text-7xl font-bold tracking-tighter"
+          style={{ color: isDark ? '#fff' : '#1a1a1a' }}
+        >
+          KB.D-2
+        </div>
+        <div className="text-sm tracking-widest uppercase"
+          style={{ color: isDark ? '#666' : '#999' }}
+        >
+          Ваш браузер не поддерживает 3D · Попробуйте Chrome или Safari
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function Scene({ config }: {
   isReady?: boolean, config: ConfigState, scrollProgress?: number
 }) {
+  const { settings: quality, tier } = useGPUStore()
+
+  // Full fallback — no WebGL at all
+  if (tier === 'fallback') {
+    return <StaticFallback theme={config.theme} />
+  }
+
   return (
     <Canvas
       shadows
       camera={{ position: [-3, 2, 6], fov: 28 }}
-      dpr={[1, 2]}
+      dpr={quality.dpr}
       gl={{
-        antialias: true,
+        antialias: quality.antialias,
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.5,
         outputColorSpace: THREE.SRGBColorSpace,
+        // Prevent hard crash on context loss
+        powerPreference: tier === 'low' ? 'low-power' : 'high-performance',
+      }}
+      // Handle unrecoverable context loss
+      onCreated={({ gl: renderer }) => {
+        renderer.domElement.addEventListener('webglcontextlost', (e) => {
+          e.preventDefault()
+        })
       }}
     >
+      <ContextGuard />
       <Suspense fallback={null}>
         <SceneBG theme={config.theme} />
-        <InnerScene config={config} />
+        <InnerScene config={config} quality={quality} />
       </Suspense>
     </Canvas>
   )

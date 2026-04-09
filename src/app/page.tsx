@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { useState, useEffect, useCallback } from "react"
 import { useProgress } from "@react-three/drei"
 import { useConfigStore } from "@/store/useConfigStore"
+import { useGPUStore } from "@/store/useGPUStore"
 
 
 /* ═══════════════════════════════════════════
@@ -129,6 +130,12 @@ function Preloader({ onDone }: { onDone: () => void }) {
 export default function Home() {
   const [showUI, setShowUI] = useState(false)
   const config = useConfigStore()
+  const { detect, detected } = useGPUStore()
+
+  // Run GPU detection once on mount
+  useEffect(() => {
+    if (!detected) detect()
+  }, [detect, detected])
 
   const handleDone = useCallback(() => {
     setTimeout(() => setShowUI(true), 300)
