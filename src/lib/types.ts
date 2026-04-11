@@ -2,6 +2,8 @@ export type LightingMode = 'default' | 'blinds' | 'caustics' | 'ring' | 'trackin
 
 export type StandMode = 'glass' | 'void' | 'monolith' | 'quantum'
 
+export type CameraPreset = 'hero' | 'front' | 'top' | 'low' | 'side' | 'isometric'
+
 export type SpecId = string | null
 
 export type FXKey = 
@@ -28,4 +30,7 @@ export interface ConfigState {
   exploded: boolean;
   amount: number;
   layout: 'line' | 'cinematic';
+  cameraPreset: CameraPreset;
+  cameraFov: number;
+  freeOrbit: boolean;
 }

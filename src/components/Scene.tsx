@@ -234,50 +234,102 @@ function LightingRig({ config }: { config: ConfigState }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   CAMERA & POSTPROCESSING (FX LAB)
+   CAMERA PRESETS & POSTPROCESSING (FX LAB)
    ══════════════════════════════════════════════════════════════════════════ */
 
+// Camera presets: position + target in world space
+import type { CameraPreset } from "@/lib/types"
+
+interface PresetDef {
+  position: [number, number, number]
+  target: [number, number, number]
+  label: string
+}
+
+const CAMERA_PRESETS: Record<CameraPreset, PresetDef> = {
+  hero:      { position: [-3, 2, 6],    target: [0, 0, 0], label: '3/4 Hero' },
+  front:     { position: [0, 0.5, 7],   target: [0, 0, 0], label: 'Front' },
+  top:       { position: [0, 8, 0.5],   target: [0, 0, 0], label: 'Top-Down' },
+  low:       { position: [3, -1, 6],    target: [0, 0.5, 0], label: 'Low Angle' },
+  side:      { position: [7, 0.5, 0],   target: [0, 0, 0], label: 'Side Profile' },
+  isometric: { position: [5, 5, 5],     target: [0, 0, 0], label: 'Isometric' },
+}
+
+export { CAMERA_PRESETS }
+
 function CameraRig({ config }: { config: ConfigState }) {
-  const { activeFx, activeSpec } = config
+  const { activeFx, activeSpec, cameraPreset, cameraFov } = config
   const isSettling = useRef(false)
   const { controls, camera } = useThree()
   
   // Ref for the target we want orbitControls to look at
   const orbitTarget = useRef(new THREE.Vector3(0, 0, 0))
+  // Ref for desired camera position
+  const desiredPos = useRef(new THREE.Vector3(-3, 2, 6))
+  // Track if we're in preset transition
+  const isTransitioning = useRef(false)
+  const transitionProgress = useRef(1)
 
+  // When preset changes, start transition
+  const lastPreset = useRef(cameraPreset)
+  
   useFrame((state, delta) => {
-
     const t = state.clock.elapsedTime
     const hasKinematic = activeFx.dutchAngle || activeFx.dollyZoom || activeFx.cameraShake
+    const presetDef = CAMERA_PRESETS[cameraPreset]
+    
+    // ── PRESET TRANSITION ──
+    if (lastPreset.current !== cameraPreset) {
+      lastPreset.current = cameraPreset
+      isTransitioning.current = true
+      transitionProgress.current = 0
+    }
+    
+    if (isTransitioning.current) {
+      transitionProgress.current = Math.min(transitionProgress.current + delta * 1.0, 1)
+      if (transitionProgress.current >= 1) {
+        isTransitioning.current = false
+      }
+    }
 
     // ── HOTSPOT FOCUS LOGIC ──
-    // Find the active spec data
     const currentSpec = SPEC_POINTS.find(s => s.id === activeSpec)
     if (currentSpec) {
       orbitTarget.current.set(...currentSpec.target)
     } else {
-      orbitTarget.current.set(0, 0, 0)
+      // Lerp to preset's target
+      const pt = presetDef.target
+      orbitTarget.current.lerp(new THREE.Vector3(pt[0], pt[1], pt[2]), delta * 1.5)
     }
 
-    // Smoothly lerp OrbitControls target to our desired focus point
+    // Smoothly lerp OrbitControls target
     if (controls && (controls as any).target) {
-      (controls as any).target.lerp(orbitTarget.current, delta * 4)
+      (controls as any).target.lerp(orbitTarget.current, delta * 2)
     }
 
-    // Smoothly push camera closer if a spec is active (macro-focus effect)
-    if (currentSpec && state.camera instanceof THREE.PerspectiveCamera) {
-      // Lerp FOV tighter for macro effect
-      state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 18, delta * 3)
-      state.camera.updateProjectionMatrix()
-    } else if (!hasKinematic && !currentSpec && state.camera instanceof THREE.PerspectiveCamera) {
-      // Return to default FOV if no spec active and no dolly zoom
-      state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 28, delta * 3)
+    // ── CAMERA POSITION (preset-driven) ──
+    if (!currentSpec && isTransitioning.current) {
+      // Smooth transition to preset position
+      const pp = presetDef.position
+      desiredPos.current.lerp(new THREE.Vector3(pp[0], pp[1], pp[2]), delta * 1.5)
+      state.camera.position.lerp(desiredPos.current, delta * 2)
+    }
+
+    // ── FOV CONTROL ──
+    if (state.camera instanceof THREE.PerspectiveCamera) {
+      const targetFov = currentSpec 
+        ? 18  // Macro focus for specs
+        : activeFx.dollyZoom 
+          ? cameraFov + Math.sin(t * 0.8) * 15  // Dolly zoom oscillation around user FOV
+          : cameraFov  // User-selected FOV
+      
+      state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, targetFov, delta * 1.5)
       state.camera.updateProjectionMatrix()
     }
 
-    if (!hasKinematic && !isSettling.current && !currentSpec) return
+    if (!hasKinematic && !isSettling.current && !currentSpec && !isTransitioning.current) return
 
-    // 2. Dutch Angle
+    // Dutch Angle
     if (activeFx.dutchAngle) {
       state.camera.rotation.z = THREE.MathUtils.lerp(state.camera.rotation.z, state.pointer.x * 0.2, 0.1)
       isSettling.current = true
@@ -285,19 +337,12 @@ function CameraRig({ config }: { config: ConfigState }) {
       state.camera.rotation.z = THREE.MathUtils.lerp(state.camera.rotation.z, 0, 0.1)
     }
 
-    // 3. Dolly Zoom
-    if (state.camera instanceof THREE.PerspectiveCamera) {
-      if (activeFx.dollyZoom) {
-        const dollyOsc = Math.sin(t * 0.8) // -1 to +1
-        state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 28 + dollyOsc * 15, 0.1)
-        isSettling.current = true
-      } else if (isSettling.current && !currentSpec) {
-        state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 28, 0.1)
-      }
-      state.camera.updateProjectionMatrix()
+    // Dolly Zoom (FOV oscillation handled above)
+    if (activeFx.dollyZoom) {
+      isSettling.current = true
     }
 
-    // 1. Handheld Shake
+    // Handheld Shake
     if (activeFx.cameraShake) {
        const shakeX = (Math.sin(t * 5.1) * 0.05 + Math.cos(t * 3.2) * 0.03) * 0.2
        const shakeY = (Math.sin(t * 4.6) * 0.05 + Math.sin(t * 6.3) * 0.03) * 0.2
@@ -308,9 +353,9 @@ function CameraRig({ config }: { config: ConfigState }) {
 
     // Check if settled
     if (!hasKinematic && isSettling.current && !currentSpec) {
-      if (Math.abs(state.camera.rotation.z) < 0.005 && state.camera instanceof THREE.PerspectiveCamera && Math.abs(state.camera.fov - 28) < 0.1) {
+      if (Math.abs(state.camera.rotation.z) < 0.005 && state.camera instanceof THREE.PerspectiveCamera && Math.abs(state.camera.fov - cameraFov) < 0.1) {
         state.camera.rotation.z = 0
-        state.camera.fov = 28
+        state.camera.fov = cameraFov
         state.camera.updateProjectionMatrix()
         isSettling.current = false
       }
@@ -543,6 +588,170 @@ function Pedestal({ config, quality }: { config: ConfigState, quality: QualitySe
   return <FrostedGlassSlab theme={config.theme} quality={quality} />
 }
 
+/* ── Animated Pedestal Wrapper ── */
+function AnimatedPedestal({ config, quality }: { config: ConfigState, quality: QualitySettings }) {
+  const ref = useRef<THREE.Group>(null!)
+  const posY = useRef(0)
+  const fade = useRef(1)
+  const baseOpacitiesStored = useRef(false)
+  
+  useFrame((_, delta) => {
+    if (!ref.current) return
+    
+    // Store base opacities on first frame (once)
+    if (!baseOpacitiesStored.current) {
+      ref.current.traverse((child) => {
+        const mesh = child as THREE.Mesh
+        if (mesh.material) {
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+          mats.forEach((mat) => {
+            if (mat.userData._baseOpacity === undefined) {
+              mat.userData._baseOpacity = mat.opacity ?? 1
+              mat.transparent = true
+            }
+          })
+        }
+      })
+      baseOpacitiesStored.current = true
+    }
+    
+    // Lerp targets
+    const targetY = config.freeOrbit ? -1.5 : 0
+    const targetFade = config.freeOrbit ? 0 : 1
+    
+    posY.current = THREE.MathUtils.lerp(posY.current, targetY, delta * 1.0)
+    fade.current = THREE.MathUtils.lerp(fade.current, targetFade, delta * 1.2)
+    
+    // Apply position
+    ref.current.position.y = posY.current
+    
+    // Apply opacity to all materials
+    ref.current.traverse((child) => {
+      const mesh = child as THREE.Mesh
+      if (mesh.material) {
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        mats.forEach((mat) => {
+          if (mat.userData._baseOpacity !== undefined) {
+            mat.opacity = mat.userData._baseOpacity * fade.current
+          }
+        })
+      }
+    })
+    
+    // Hide when fully faded to save GPU
+    ref.current.visible = fade.current > 0.005
+  })
+  
+  return (
+    <group ref={ref}>
+      <Pedestal config={config} quality={quality} />
+    </group>
+  )
+}
+
+/* ── Animated Contact Shadows ── */
+function AnimatedShadows({ config, quality }: { config: ConfigState, quality: QualitySettings }) {
+  const ref = useRef<THREE.Group>(null!)
+  const currentOpacity = useRef(config.theme === 'dark' ? 0.7 : 0.45)
+  
+  useFrame((_, delta) => {
+    const targetOpacity = config.freeOrbit ? 0 : (config.theme === 'dark' ? 0.7 : 0.45)
+    currentOpacity.current = THREE.MathUtils.lerp(currentOpacity.current, targetOpacity, delta * 1.2)
+    
+    // Update the shadow mesh opacity directly
+    if (ref.current) {
+      ref.current.traverse((child) => {
+        if ((child as THREE.Mesh).material && 'opacity' in (child as THREE.Mesh).material) {
+          const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial
+          mat.opacity = currentOpacity.current
+        }
+      })
+    }
+  })
+
+  if (!quality.enableContactShadows) return null
+  
+  return (
+    <group ref={ref}>
+      <ContactShadows
+        key={`shadow-${config.standMode}-${config.lightingMode}`}
+        position={[0, -0.49, 0]}
+        opacity={config.theme === 'dark' ? 0.7 : 0.45}
+        scale={config.standMode === 'void' || config.standMode === 'quantum' ? 4 : 6}
+        blur={config.standMode === 'void' || config.standMode === 'quantum' ? 1.0 : 2.5}
+        far={6}
+        frames={1}
+        resolution={quality.contactShadowResolution}
+        color="#000000"
+      />
+    </group>
+  )
+}
+
+/* ── Inner Scene ── */
+/* ── Smooth Orbit Limits — only lerps constraints, lets OrbitControls damping move the camera ── */
+function SmoothOrbitLimits({ config }: { config: ConfigState }) {
+  const { controls } = useThree()
+  const wasFreeOrbit = useRef(config.freeOrbit)
+  
+  // Lerped limit values
+  const minPolar = useRef(config.freeOrbit ? 0 : Math.PI / 4)
+  const maxPolar = useRef(config.freeOrbit ? Math.PI : Math.PI / 2)
+  const minDist = useRef(config.freeOrbit ? 3 : 4)
+  const maxDist = useRef(config.freeOrbit ? 16 : 12)
+  
+  useFrame((_, delta) => {
+    const orbitControls = controls as any
+    if (!orbitControls) return
+    
+    // Target values based on mode
+    const targetMinPolar = config.freeOrbit ? 0.01 : Math.PI / 4
+    const targetMaxPolar = config.freeOrbit ? Math.PI - 0.01 : Math.PI / 2
+    const targetMinDist = config.freeOrbit ? 3 : 4
+    const targetMaxDist = config.freeOrbit ? 16 : 12
+    
+    // Detect transition direction for speed
+    const entering = !wasFreeOrbit.current && config.freeOrbit
+    const exiting = wasFreeOrbit.current && !config.freeOrbit
+    if (entering || exiting) wasFreeOrbit.current = config.freeOrbit
+    
+    // Single smooth lerp — no fighting with OrbitControls
+    // OrbitControls damping naturally moves the camera when limits change
+    const speed = delta * 1.0  // ~1 second transition
+    
+    minPolar.current = THREE.MathUtils.lerp(minPolar.current, targetMinPolar, speed)
+    maxPolar.current = THREE.MathUtils.lerp(maxPolar.current, targetMaxPolar, speed)
+    minDist.current = THREE.MathUtils.lerp(minDist.current, targetMinDist, speed)
+    maxDist.current = THREE.MathUtils.lerp(maxDist.current, targetMaxDist, speed)
+    
+    // Apply
+    orbitControls.minPolarAngle = minPolar.current
+    orbitControls.maxPolarAngle = maxPolar.current
+    orbitControls.minDistance = minDist.current
+    orbitControls.maxDistance = maxDist.current
+    orbitControls.autoRotate = config.freeOrbit
+    orbitControls.autoRotateSpeed = 0.3
+  })
+  
+  return (
+    <OrbitControls
+      enableZoom={true}
+      enablePan={false}
+      enableRotate={true}
+      minPolarAngle={Math.PI / 4}
+      maxPolarAngle={Math.PI / 2}
+      minDistance={4}
+      maxDistance={12}
+      autoRotate={false}
+      autoRotateSpeed={0.3}
+      target={[0, 0, 0]}
+      makeDefault
+      dampingFactor={0.03}
+      enableDamping
+    />
+  )
+}
+
 /* ── Inner Scene ── */
 function InnerScene({ config, quality }: { config: ConfigState, quality: QualitySettings }) {
   const groupRef = useRef<THREE.Group>(null!)
@@ -552,41 +761,18 @@ function InnerScene({ config, quality }: { config: ConfigState, quality: Quality
       {/* ═══ DYNAMIC LIGHTING METASYSTEM ═══ */}
       <LightingRig config={config} />
 
-      {/* ═══ POLE / SLAB — STATIONARY ═══ */}
-      <Pedestal config={config} quality={quality} />
+      {/* ═══ PEDESTAL — smooth animated hide/show ═══ */}
+      <AnimatedPedestal config={config} quality={quality} />
 
-      {/* Ground contact shadow ON the slab */}
-      {quality.enableContactShadows && config.standMode !== 'void' && config.standMode !== 'quantum' && (
-        <ContactShadows
-          position={[0, -0.49, 0]}
-          opacity={config.theme === 'dark' ? 0.8 : 0.5}
-          scale={7}
-          blur={2.5}
-          far={6}
-          resolution={quality.contactShadowResolution}
-          color="#000000"
-        />
-      )}
-      
-      {/* For void/quantum, sharper tighter shadow on the imaginary floor */}
-      {quality.enableContactShadows && (config.standMode === 'void' || config.standMode === 'quantum') && (
-        <ContactShadows
-          position={[0, -0.49, 0]}
-          opacity={config.theme === 'dark' ? 0.9 : 0.6}
-          scale={4}
-          blur={1.0}
-          far={10}
-          resolution={quality.contactShadowResolution}
-          color="#000000"
-        />
-      )}
+      {/* ═══ SHADOWS — smooth opacity animation ═══ */}
+      <AnimatedShadows config={config} quality={quality} />
 
-      {/* ═══ PRODUCT — FLOATING ABOVE SLAB ═══ */}
+      {/* ═══ PRODUCT — FLOATING ═══ */}
       <Float
-        speed={config.standMode === 'monolith' ? 0.2 : 1.5}
-        rotationIntensity={config.standMode === 'quantum' ? 0.0 : 0.2}
-        floatIntensity={config.standMode === 'quantum' ? 0.1 : 0.4}
-        floatingRange={config.standMode === 'monolith' ? [0.0, 0.015] : [-0.1, 0.1]}
+        speed={config.freeOrbit ? 0.6 : (config.standMode === 'monolith' ? 0.2 : 1.5)}
+        rotationIntensity={config.freeOrbit ? 0.05 : (config.standMode === 'quantum' ? 0.0 : 0.2)}
+        floatIntensity={config.freeOrbit ? 0.1 : (config.standMode === 'quantum' ? 0.1 : 0.4)}
+        floatingRange={config.freeOrbit ? [-0.03, 0.03] : (config.standMode === 'monolith' ? [0.0, 0.015] : [-0.1, 0.1])}
       >
         <group 
           ref={groupRef} 
@@ -610,20 +796,7 @@ function InnerScene({ config, quality }: { config: ConfigState, quality: Quality
       <CameraRig config={config} />
       <FXRig config={config} quality={quality} />
 
-      <OrbitControls
-        enableZoom={true}
-        enablePan={false}
-        enableRotate={true}
-        minPolarAngle={Math.PI / 4}
-        maxPolarAngle={Math.PI / 2}
-        minDistance={4}
-        maxDistance={12}
-        autoRotate={false}
-        target={[0, 0, 0]}
-        makeDefault
-        dampingFactor={0.05}
-        enableDamping
-      />
+      <SmoothOrbitLimits config={config} />
     </>
   )
 }
@@ -694,7 +867,7 @@ export function Scene({ config }: {
   return (
     <Canvas
       shadows
-      camera={{ position: [-3, 2, 6], fov: 28 }}
+      camera={{ position: [-3, 2, 6], fov: 50 }}
       dpr={quality.dpr}
       gl={{
         antialias: quality.antialias,

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { ConfigState, StandMode, SpecId } from '@/lib/types'
+import { ConfigState, StandMode, SpecId, CameraPreset } from '@/lib/types'
 
 interface ConfigStore extends ConfigState {
   setTheme: (theme: 'light' | 'dark') => void
@@ -18,6 +18,9 @@ interface ConfigStore extends ConfigState {
   setExploded: (on: boolean) => void
   setAmount: (amount: number) => void
   setLayout: (layout: 'line' | 'cinematic') => void
+  setCameraPreset: (preset: CameraPreset) => void
+  setCameraFov: (fov: number) => void
+  toggleFreeOrbit: () => void
   reset: () => void
 }
 
@@ -54,6 +57,9 @@ const DEFAULT_CONFIG: ConfigState = {
   exploded: false,
   amount: 0,
   layout: 'cinematic',
+  cameraPreset: 'hero',
+  cameraFov: 50,
+  freeOrbit: false,
 }
 
 export const useConfigStore = create<ConfigStore>((set) => ({
@@ -75,5 +81,8 @@ export const useConfigStore = create<ConfigStore>((set) => ({
   setExploded: (on) => set({ exploded: on }),
   setAmount: (amount) => set({ amount }),
   setLayout: (layout) => set({ layout }),
+  setCameraPreset: (preset) => set({ cameraPreset: preset }),
+  setCameraFov: (fov) => set({ cameraFov: fov }),
+  toggleFreeOrbit: () => set((state) => ({ freeOrbit: !state.freeOrbit })),
   reset: () => set(DEFAULT_CONFIG),
 }))

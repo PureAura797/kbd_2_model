@@ -1,9 +1,10 @@
 "use client"
 
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import { useConfigStore } from "@/store/useConfigStore"
-import { ArrowUpRight, Monitor, Box, Layers, Moon, Sun, AlignRight, Waves, Aperture, Focus, Activity, MoonStar, Camera, Waypoints, Disc, Magnet } from "lucide-react"
-import { LightingMode, StandMode } from "@/lib/types"
+import { ArrowUpRight, Monitor, Box, Layers, Moon, Sun, AlignRight, Waves, Aperture, Focus, Activity, MoonStar, Camera, Waypoints, Disc, Magnet, ScanLine, Minimize2 } from "lucide-react"
+import { LightingMode, StandMode, CameraPreset } from "@/lib/types"
+import { useState } from "react"
 
 import { flushSync } from 'react-dom'
 
@@ -36,6 +37,17 @@ const MODES = [
   { key: 'annotations', icon: Waypoints, label: 'Спеки', getter: (s: ReturnType<typeof useConfigStore.getState>) => s.showAnnotations, toggle: (s: ReturnType<typeof useConfigStore.getState>) => s.setAnnotations(!s.showAnnotations) },
 ]
 
+const CAMERA_PRESET_ORDER: { value: CameraPreset, label: string, icon: string }[] = [
+  { value: 'hero', label: '3/4 Hero', icon: '◈' },
+  { value: 'front', label: 'Front', icon: '▣' },
+  { value: 'top', label: 'Top-Down', icon: '◉' },
+  { value: 'low', label: 'Low Angle', icon: '△' },
+  { value: 'side', label: 'Side', icon: '▷' },
+  { value: 'isometric', label: 'Iso', icon: '◇' },
+]
+
+// FOV to mm equivalent (approx for full-frame sensor)
+const fovToMM = (fov: number) => Math.round(36 / (2 * Math.tan((fov * Math.PI) / 360)))
 const ThemeTransitionStyles = () => (
   <style dangerouslySetInnerHTML={{ __html: `
     ::view-transition-old(root),
@@ -178,6 +190,65 @@ export function DockBar() {
             <Camera className="w-4 h-4" strokeWidth={1.5} />
             <span className="hidden md:inline">FX Lab</span>
           </button>
+
+          {/* Free Orbit / Levitate */}
+          <button
+            onClick={() => store.toggleFreeOrbit()}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-[12px] font-medium transition-all duration-300
+              ${store.freeOrbit
+                ? 'bg-cyan-500/15 text-cyan-600 dark:bg-cyan-400/15 dark:text-cyan-400'
+                : 'text-black/60 hover:text-black hover:bg-black/5 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/10'
+              }`}
+            title="Свободный обзор 360°"
+          >
+            <ArrowUpRight className={`w-4 h-4 transition-transform duration-500 ${store.freeOrbit ? 'rotate-[-45deg]' : ''}`} strokeWidth={1.5} />
+            <span className="hidden md:inline">{store.freeOrbit ? '360°' : 'Orbit'}</span>
+          </button>
+        </div>
+
+        {/* ── Divider ── */}
+        <div className="w-px h-6 bg-black/[0.1] dark:bg-white/[0.1] mx-1" />
+
+        {/* ── Camera Perspective Controls ── */}
+        <div className="flex items-center gap-0.5 px-1">
+          {/* Preset cycle */}
+          <button
+            onClick={() => {
+              const idx = CAMERA_PRESET_ORDER.findIndex(p => p.value === store.cameraPreset)
+              const next = CAMERA_PRESET_ORDER[(idx + 1) % CAMERA_PRESET_ORDER.length]
+              store.setCameraPreset(next.value)
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-[12px] font-medium transition-all duration-300 text-black/60 hover:text-black hover:bg-black/5 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/10"
+            title={`Ракурс: ${CAMERA_PRESET_ORDER.find(p => p.value === store.cameraPreset)?.label}`}
+          >
+            <ScanLine className="w-4 h-4" strokeWidth={1.5} />
+            <span className="hidden md:inline text-[11px] font-mono tabular-nums">
+              {CAMERA_PRESET_ORDER.find(p => p.value === store.cameraPreset)?.label}
+            </span>
+          </button>
+
+          {/* FOV / Perspective angle slider (inline) */}
+          <div className="hidden md:flex items-center gap-2 px-2">
+            <span className="text-[10px] font-mono text-black/40 dark:text-white/40 tabular-nums w-[30px] text-right">
+              {store.cameraFov}°
+            </span>
+            <input
+              type="range"
+              min={45}
+              max={120}
+              step={1}
+              value={store.cameraFov}
+              onChange={(e) => store.setCameraFov(Number(e.target.value))}
+              className="w-[80px] h-[3px] appearance-none bg-black/10 dark:bg-white/15 rounded-full outline-none cursor-pointer
+                [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-[12px] [&::-webkit-slider-thumb]:h-[12px] 
+                [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-black/70 dark:[&::-webkit-slider-thumb]:bg-white/80 
+                [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer
+                [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:duration-200
+                [&::-webkit-slider-thumb]:hover:scale-125"
+              title={`Перспектива: ${store.cameraFov}°`}
+            />
+            <Minimize2 className="w-3 h-3 text-black/30 dark:text-white/30" strokeWidth={1.5} />
+          </div>
         </div>
 
         {/* ── Theme Tumbler (Right Side) ── */}
@@ -287,6 +358,32 @@ export function DockBarMobile() {
             title="FX Lab"
           >
             <Camera className="w-4 h-4" strokeWidth={1.5} />
+          </button>
+
+          {/* Camera preset (mobile) */}
+          <button
+            onClick={() => {
+              const idx = CAMERA_PRESET_ORDER.findIndex(p => p.value === store.cameraPreset)
+              const next = CAMERA_PRESET_ORDER[(idx + 1) % CAMERA_PRESET_ORDER.length]
+              store.setCameraPreset(next.value)
+            }}
+            className="p-2 rounded-full transition-all duration-300 text-black/60 hover:text-black dark:text-white/60 dark:hover:text-white"
+            title={`Ракурс: ${CAMERA_PRESET_ORDER.find(p => p.value === store.cameraPreset)?.label}`}
+          >
+            <ScanLine className="w-4 h-4" strokeWidth={1.5} />
+          </button>
+
+          {/* Free Orbit (mobile) */}
+          <button
+            onClick={() => store.toggleFreeOrbit()}
+            className={`p-2 rounded-full transition-all duration-300
+              ${store.freeOrbit
+                ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400'
+                : 'text-black/60 hover:text-black dark:text-white/60 dark:hover:text-white'
+              }`}
+            title="360°"
+          >
+            <ArrowUpRight className={`w-4 h-4 transition-transform duration-500 ${store.freeOrbit ? 'rotate-[-45deg]' : ''}`} strokeWidth={1.5} />
           </button>
 
           <div className="w-px h-5 bg-black/[0.1] dark:bg-white/[0.1] mx-0.5" />
